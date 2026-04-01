@@ -5,3 +5,4 @@ tensorflow
 opencv-python
 scikit-learn
 pandas
+gunicorn
