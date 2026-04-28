@@ -1,5 +1,9 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import numpy as np
+import tensorflow as tf
+import cv2
+import base64
 import os
 
 from utils import load_model_scaler, preprocess_input
@@ -8,6 +12,15 @@ app = Flask(__name__)
 CORS(app)
 
 data_model, scaler = load_model_scaler()
+
+classification_model = tf.keras.models.load_model(
+    "image_models/classification_model_final.keras"
+)
+unet_model = tf.keras.models.load_model(
+    "image_models/unet_best_model.keras"
+)
+
+class_labels = ["benign", "malignant", "normal"]
 
 
 @app.route("/", methods=["GET"])
@@ -22,7 +35,8 @@ def home():
 def health():
     return jsonify({
         "status": "ok",
-        "data_model": "loaded"
+        "data_model": "loaded",
+        "image_models": "loaded"
     })
 
 
@@ -40,7 +54,6 @@ def predict_data():
             return jsonify({"error": "Expected 30 features"}), 400
 
         input_scaled = preprocess_input(features, scaler)
-
         probability = data_model.predict_proba(input_scaled)[0][1] * 100
 
         if probability < 30:
@@ -61,6 +74,62 @@ def predict_data():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+def preprocess_image(img, target_size=(128, 128)):
+    img = cv2.resize(img, target_size)
+    img = img / 255.0
+    img = np.expand_dims(img, axis=0)
+    return img
+
+
+def predict_image(img):
+    img_input = preprocess_image(img)
+
+    cls_pred = classification_model.predict(img_input)
+    cls_index = int(np.argmax(cls_pred))
+    cls_label = class_labels[cls_index]
+
+    mask_pred = unet_model.predict(img_input)[0]
+    mask_pred = (mask_pred > 0.5).astype(np.uint8)
+
+    return cls_label, mask_pred
+
+
+def mask_to_base64(mask):
+    mask_img = (mask.squeeze() * 255).astype(np.uint8)
+    success, buffer = cv2.imencode(".png", mask_img)
+
+    if not success:
+        raise ValueError("Failed to encode mask image")
+
+    return base64.b64encode(buffer).decode("utf-8")
+
+
+@app.route("/predict/image", methods=["POST"])
+def predict_image_api():
+    try:
+        if "image" not in request.files:
+            return jsonify({"error": "No image uploaded"}), 400
+
+        file = request.files["image"]
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return jsonify({"error": "Invalid image"}), 400
+
+        label, mask = predict_image(img)
+        mask_base64 = mask_to_base64(mask)
+
+        return jsonify({
+            "status": "success",
+            "prediction": label,
+            "mask": mask_base64
+        })
+
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True, host="0.0.0.0", port=port)
