@@ -13,8 +13,8 @@ CORS(app)
 
 data_model, scaler = load_model_scaler()
 
-classification_model = tf.keras.models.load_model("image_models/classification_model_final.keras")
-unet_model = tf.keras.models.load_model("image_models/unet_best_model.keras")
+# classification_model = tf.keras.models.load_model("image_models/classification_model_final.keras")
+# unet_model = tf.keras.models.load_model("image_models/unet_best_model.keras")
 
 class_labels = ["benign", "malignant", "normal"]
 
